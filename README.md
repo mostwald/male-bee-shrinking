@@ -14,6 +14,8 @@ Modeling insect heat exchange and predicting thermal responses depends on accura
 
 **grid_filtered_CA_size_data.csv**: In this document, we present the size data used in the main analysis (ADD SCRIPT NAME.R). These data include only the specimens retained after spatiotemporal binning.
 
+**before_filtering_CA_size_data.csv**: In this document, we present the size data used in the main analysis PRIOR to spatiotemporal binning, done in (insert script name).
+
 **roberts_model_long.csv**: This document contains heat flux data from Roberts and Harrison, 1999, as well as longwave radiation and convective heat loss data estimated from 3D model data. These data are used to estimate heat budgets in the analysis code (3D_heat_budget_analysis_github.R).
 
 **3D_apis_trait_format.csv**: In this document, we present the same raw measurement data as above, but in a standardized format that lends itself to functional trait data sharing (see this [functional trait data sharing repository](https://github.com/mostwald/Functional-trait-review) for descriptors of column headers).

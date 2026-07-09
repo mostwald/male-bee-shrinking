@@ -12,7 +12,7 @@ Modeling insect heat exchange and predicting thermal responses depends on accura
 
 ## Data: Contains the raw morphometric and specimen data in two formats
 
-**3D_heat_budget_measurement_data_wide_format.csv**: In this document, we present the raw measurement data used in the analysis (3D_heat_budget_analysis_github.R).
+**grid_filtered_CA_size_data.csv**: In this document, we present the size data used in the main analysis (ADD SCRIPT NAME.R). These data include only the specimens retained after spatiotemporal binning.
 
 **roberts_model_long.csv**: This document contains heat flux data from Roberts and Harrison, 1999, as well as longwave radiation and convective heat loss data estimated from 3D model data. These data are used to estimate heat budgets in the analysis code (3D_heat_budget_analysis_github.R).
 

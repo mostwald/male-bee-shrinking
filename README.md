@@ -1,23 +1,31 @@
 # Widening sexual size dimorphism in bees over a century of climate change
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17599627.svg)](https://doi.org/10.5281/zenodo.17599627)
 
 # Abstract
-Shrinking body size is a pervasive consequence of global change, with implications for biodiversity and ecosystem functioning. How size trends may differ among the sexes is poorly resolved, despite the destabilising potential of divergent responses. For bees, body size governs pollination efficiency and temperature sensitivity, yet evidence for size shifts is mixed and fragmented. We leverage natural history collections and community science measurements to disentangle temporal and spatial trends in body size across 136 bee species sampled over more than a century of climate change and land conversion in California (1900 – 2024). Male bees declined significantly in size since 1900, while females remained stable. The male size decline was driven by local precipitation, with smaller bees in drier years, accompanied by increasing precipitation variability over the study period. Across spatial gradients, males were also more sensitive than females to environmental variation, but with size variation driven by land use, not climate. This divergence in spatial and temporal drivers illustrates the risk of predicting temporal trends from spatial comparisons and underscores the utility of datasets spanning broad environmental gradients and long-time series. Further, these sex-specific responses raise the possibility of male sensitivity to resource scarcity and/or strong selection to maintain female body size. Together, these findings reveal male vulnerability and female resilience to environmental variability, with implications for pollination services and population stability under ongoing climate change.
+Shrinking body size is a pervasive consequence of global change, with implications for biodiversity and ecosystem functioning. Still, whether males and females differ in their vulnerability to shrinkage remains poorly resolved, despite the destabilising potential of sex-specific size trajectories. Further, disentangling the spatial and temporal drivers of size variation remains a persistent challenge. For bees, body size governs pollination efficiency and temperature sensitivity, yet evidence for size shifts is mixed and fragmented. We leverage natural history collections and community science measurements to investigate temporal and spatial trends in body size across 136 bee species sampled over more than a century of climate change and land conversion in California (1900 – 2024). Male bees declined significantly in size since 1900, while females remained stable. The male size decline was driven by local precipitation, with smaller bees in drier years, accompanied by increasing precipitation variability over the study period. Across spatial gradients, males were also more sensitive than females to environmental variation, but with size variation driven by land use, not climate. This divergence in spatial and temporal drivers illustrates the risk of predicting temporal trends from spatial comparisons and underscores the utility of datasets spanning broad environmental gradients and long time series. Further, these sex-specific responses raise the possibility of male sensitivity to resource scarcity and/or strong selection to maintain female body size. Together, these findings reveal male vulnerability and female resilience to environmental variability, with implications for pollination services and population stability under ongoing climate change.
 
 # Repository Directory
 
-### Code: Contains code for data analysis in R
+### Code:
 
-**3D_heat_budget_analysis_github.R**: In this document, we analyze morphometric data (ITD, head width, costal vein length, dry mass, volume, surface area) to understand inter- and intra-specific predictors of body size.
+**CA_size_analysis.R** is the main script for the analysis presented in the paper. Uses grid_filtered_CA_size_data.csv as input.
 
-## Data: Contains the raw morphometric and specimen data in two formats
+**CA_size_figures.R** produces the figures in the paper. Run CA_size_analysis.R
 
-**grid_filtered_CA_size_data.csv**: In this document, we present the size data used in the main analysis (ADD SCRIPT NAME.R). These data include only the specimens retained after spatiotemporal binning.
+**CA_size_spatiotemporal binning.R** is the script which takes all specimen data and filters them into 150x150km spatiotemporal bins, as described in the methods. Takes before_filtering_CA_size_data.csv as input and produces produces grid_filtered_CA_size_data.csv, which is used for the main analysis.
 
-**before_filtering_CA_size_data.csv**: In this document, we present the size data used in the main analysis PRIOR to spatiotemporal binning, done in (insert script name).
+**environmental_data_extraction.R** extracts state-wide climate and land use data from PRISM, HISDAC, and HYDE to assess changes in temp, precipitation, urbanisation, and agricultural intensity from 1900 to 2024. 
 
-**roberts_model_long.csv**: This document contains heat flux data from Roberts and Harrison, 1999, as well as longwave radiation and convective heat loss data estimated from 3D model data. These data are used to estimate heat budgets in the analysis code (3D_heat_budget_analysis_github.R).
 
-**3D_apis_trait_format.csv**: In this document, we present the same raw measurement data as above, but in a standardized format that lends itself to functional trait data sharing (see this [functional trait data sharing repository](https://github.com/mostwald/Functional-trait-review) for descriptors of column headers).
+### Data:
 
-Associated models and images can be found at the linked Zenodo repository.
+**grid_filtered_CA_size_data.csv** includes the size data used in the main analysis (CA_size_analysis.R). These data include only the specimens retained after spatiotemporal binning.
+
+**before_filtering_CA_size_data.csv** presents the size data used in the main analysis PRIOR to spatiotemporal binning, done in (CA_size_spatiotemporal binning.R).
+
+**california_environmental_trends.csv** contains state-wide climate and land use data (1900 - 2024) for environmental trend analysis (extracted in environmental_data_extraction.R, analysed in CA_size_analysis.R).
+
+**median_itd_global.csv** contains a global sample of >23K specimen measurements conducted by community scientists on Notes from Nature. These data include the California size dataset analysed in the paper as well as other measurements from other parts of the world, not used in the paper. Here, size data are presented as the median ITD measurement from all measurements for a given specimen, as recommended in Ostwald et al. 2025 (https://doi.org/10.1002/ece3.71665).
+
+**raw_itd_global.csv** contains the global size dataset presented in median_itd_global.csv, but as raw measurements rather than specimen-level medians.
+
+Specimen data are presented in standardised trait format described in: https://github.com/mostwald/Functional-trait-review.

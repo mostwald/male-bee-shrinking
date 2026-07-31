@@ -1,0 +1,556 @@
+# Bee body size change in California, 1900-2024
+# Analysis script
+# July 2026
+
+#### Setup ####
+
+library(tidyverse)
+library(mgcv)
+library(emmeans)
+library(car)
+library(nnet)
+library(zoo)
+library(sf)
+library(terra)
+library(tigris)
+
+#### Load and prepare data ####
+
+df <- read.csv("grid_filtered_CA_size_data.csv")
+
+df$sex            <- as.factor(df$sex)
+df$genus          <- as.factor(df$genus)
+df$grid_id        <- as.factor(df$grid_id)
+df$scientificName <- as.factor(df$scientificName)
+
+#### Document scaling parameters ####
+
+scaling_params <- df %>%
+  mutate(log_ppt = log(ppt_annual + 1)) %>%
+  summarise(
+    year_mean     = mean(developmentYear,    na.rm = TRUE),
+    year_sd       = sd(developmentYear,      na.rm = TRUE),
+    tmean_mean    = mean(tmean_annual,        na.rm = TRUE),
+    tmean_sd      = sd(tmean_annual,          na.rm = TRUE),
+    tmax_mean     = mean(tmax_annual,         na.rm = TRUE),
+    tmax_sd       = sd(tmax_annual,           na.rm = TRUE),
+    ppt_mean      = mean(log_ppt,             na.rm = TRUE),
+    ppt_sd        = sd(log_ppt,               na.rm = TRUE),
+    urban_mean    = mean(urban_fraction,      na.rm = TRUE),
+    urban_sd      = sd(urban_fraction,        na.rm = TRUE),
+    cropland_mean = mean(cropland_fraction,   na.rm = TRUE),
+    cropland_sd   = sd(cropland_fraction,     na.rm = TRUE)
+  )
+print(scaling_params)
+
+#### Scale predictors ####
+
+df <- df %>%
+  mutate(
+    log_ppt                = log(ppt_annual + 1),
+    developmentYear_scaled = as.numeric(scale(developmentYear)),
+    tmean_scaled            = as.numeric(scale(tmean_annual)),
+    tmax_scaled             = as.numeric(scale(tmax_annual)),
+    log_ppt_scaled          = as.numeric(scale(log_ppt)),
+    urban_scaled            = as.numeric(scale(urban_fraction)),
+    cropland_scaled         = as.numeric(scale(cropland_fraction)),
+    log_itd                 = log(median_itd)
+  )
+
+
+#### Within-cell standardisation   ####
+
+#Load grid geometry
+
+best_grid <- st_read("best_grid_150km_may2026.gpkg")
+analysis_grid_ids <- unique(as.integer(as.character(df$grid_id)))
+
+#Precipitation
+ppt_files <- list.files(
+  "PRISM_ppt",
+  pattern = ".*ppt.*\\.bil$", recursive = TRUE, full.names = TRUE)
+
+r_check_prism   <- rast(ppt_files[1])
+grid_vect_prism <- project(vect(best_grid), crs(r_check_prism))
+grid_vect_prism_filtered <- grid_vect_prism[grid_vect_prism$grid_id %in% analysis_grid_ids, ]
+
+extract_grid_annual_ppt <- function(files, grid_vect, years = 1900:2024) {
+  map_dfr(years, function(yr) {
+    yr_files <- files[grepl(paste0(yr, "\\d{2}"), files) & grepl("\\.bil$", files)]
+    if (length(yr_files) == 0) return(NULL)
+    r      <- rast(yr_files)
+    r_mean <- mean(r)
+    cell_vals <- extract(r_mean, grid_vect, fun = mean, na.rm = TRUE, ID = FALSE)
+    tibble(grid_id = grid_vect$grid_id, year = yr, value = cell_vals[[1]])
+  })
+}
+
+grid_climate_ppt <- extract_grid_annual_ppt(ppt_files, grid_vect_prism_filtered) %>%
+  rename(ppt_annual = value)
+write.csv(grid_climate_ppt, "grid_precip_full_record.csv", row.names = FALSE)
+
+# Temperature
+
+tmean_files <- list.files(
+  "PRISM_tmean",
+  pattern = "\\.bil$", recursive = TRUE, full.names = TRUE)
+
+cat("Extracting temperature...\n")
+grid_climate_tmean <- extract_grid_annual_ppt(tmean_files, grid_vect_prism_filtered) %>%
+  rename(tmean_annual = value)
+write.csv(grid_climate_tmean, "grid_tmean_full_record.csv", row.names = FALSE)
+
+#### 4. Cropland (HYDE, single annual raster per year) ####
+
+hyde_cropland_files <- list.files(
+  "/Users/madeleineostwald/Documents/ITD_env_vars/HYDE_cropland_data",
+  pattern = "cropland\\d{4}AD\\.asc$", recursive = TRUE, full.names = TRUE)
+
+r_check_hyde   <- rast(hyde_cropland_files[1])
+grid_vect_hyde <- project(vect(best_grid), crs(r_check_hyde))
+grid_vect_hyde_filtered <- grid_vect_hyde[grid_vect_hyde$grid_id %in% analysis_grid_ids, ]
+
+extract_grid_cropland <- function(files, grid_vect) {
+  map_dfr(files, function(f) {
+    yr <- as.integer(str_extract(basename(f), "\\d{4}"))
+    r  <- rast(f)
+    cell_vals <- extract(r, grid_vect, fun = mean, na.rm = TRUE, ID = FALSE)
+    tibble(grid_id = grid_vect$grid_id, year = yr, cropland = cell_vals[[1]])
+  })
+}
+
+
+grid_climate_cropland <- extract_grid_cropland(hyde_cropland_files, grid_vect_hyde_filtered)
+write.csv(grid_climate_cropland, "grid_cropland_full_record.csv", row.names = FALSE)
+
+#Urbanisation (5-year intervals, interpolated to annual)
+
+hisdac_files <- list.files(
+  "HISDAC_urbanization_data",
+  pattern = "\\.tif$", full.names = TRUE)
+
+r_check_hisdac   <- rast(hisdac_files[1])
+grid_vect_hisdac <- project(vect(best_grid), crs(r_check_hisdac))
+grid_vect_hisdac_filtered <- grid_vect_hisdac[grid_vect_hisdac$grid_id %in% analysis_grid_ids, ]
+
+extract_grid_urban <- function(files, grid_vect) {
+  map_dfr(files, function(f) {
+    yr <- as.integer(str_extract(basename(f), "^\\d{4}"))
+    r  <- rast(f)
+    cell_vals <- extract(r, grid_vect, fun = mean, na.rm = TRUE, ID = FALSE)
+    tibble(grid_id = grid_vect$grid_id, year = yr, urban_bupr = cell_vals[[1]])
+  })
+}
+
+grid_climate_urban_5yr <- extract_grid_urban(hisdac_files, grid_vect_hisdac_filtered)
+
+# Interpolate 5-year HISDAC intervals to an annual series per grid cell. carry the last available value forward for 2021-2024 (beyond HISDAC's 2020 end date).
+grid_climate_urban <- grid_climate_urban_5yr %>%
+  group_by(grid_id) %>%
+  complete(year = 1900:2024) %>%
+  arrange(grid_id, year) %>%
+  mutate(urban_bupr = na.approx(urban_bupr, x = year, na.rm = FALSE)) %>%
+  fill(urban_bupr, .direction = "downup") %>%
+  ungroup()
+
+write.csv(grid_climate_urban, "grid_urban_full_record.csv", row.names = FALSE)
+
+
+#Build within-cell baselines
+
+ppt_baseline <- grid_climate_ppt %>%
+  group_by(grid_id) %>%
+  summarise(ppt_clim_mean = mean(log(ppt_annual + 1), na.rm = TRUE))
+
+tmean_baseline <- grid_climate_tmean %>%
+  group_by(grid_id) %>%
+  summarise(tmean_clim_mean = mean(tmean_annual, na.rm = TRUE))
+
+cropland_baseline <- grid_climate_cropland %>%
+  group_by(grid_id) %>%
+  summarise(cropland_clim_mean = mean(cropland, na.rm = TRUE))
+
+urban_baseline <- grid_climate_urban %>%
+  group_by(grid_id) %>%
+  summarise(urban_clim_mean = mean(urban_bupr, na.rm = TRUE))
+
+df <- df %>%
+  mutate(grid_id_int = as.integer(as.character(grid_id))) %>%
+  left_join(ppt_baseline,      by = c("grid_id_int" = "grid_id")) %>%
+  left_join(tmean_baseline,    by = c("grid_id_int" = "grid_id")) %>%
+  left_join(cropland_baseline, by = c("grid_id_int" = "grid_id")) %>%
+  left_join(urban_baseline,    by = c("grid_id_int" = "grid_id")) %>%
+  select(-grid_id_int) %>%
+  mutate(
+    tmean_within    = tmean_annual      - tmean_clim_mean,
+    ppt_within      = log_ppt           - ppt_clim_mean,
+    cropland_within = cropland_fraction - cropland_clim_mean,
+    urban_within    = urban_fraction    - urban_clim_mean
+  ) %>%
+  mutate(
+    tmean_within_scaled    = as.numeric(scale(tmean_within)),
+    ppt_within_scaled      = as.numeric(scale(ppt_within)),
+    cropland_within_scaled = as.numeric(scale(cropland_within)),
+    urban_within_scaled    = as.numeric(scale(urban_within))
+  )
+
+#Residuals for plotting
+
+df$resid_itd <- residuals(lm(log(median_itd) ~ genus, data = df))
+
+#Grid-cell-level precipitation trends
+
+grid_trends <- grid_climate_ppt %>%
+  group_by(grid_id) %>%
+  group_modify(~ {
+    m <- lm(ppt_annual ~ year, data = .x)
+    tibble(slope = coef(m)["year"],
+           p_value = summary(m)$coefficients["year", "Pr(>|t|)"],
+           n_years = nrow(.x))
+  }) %>%
+  ungroup()
+
+
+#### Random effects selection ####
+
+m_re0 <- bam(log_itd ~ genus + sex +
+               s(developmentYear_scaled),
+             data = df, method = "fREML")
+
+m_re1 <- bam(log_itd ~ genus + sex +
+               s(developmentYear_scaled) +
+               s(scientificName, bs = "re"),
+             data = df, method = "fREML")
+
+m_re2 <- bam(log_itd ~ genus + sex +
+               s(developmentYear_scaled) +
+               s(grid_id, bs = "re"),
+             data = df, method = "fREML")
+
+m_re3 <- bam(log_itd ~ genus + sex +
+               s(developmentYear_scaled) +
+               s(scientificName, bs = "re") +
+               s(grid_id, bs = "re"),
+             data = df, method = "fREML")
+
+AIC(m_re0, m_re1, m_re2, m_re3)
+# m_re3 has lowest AIC — both random effects justified, carried forward
+
+#### Question 1: Has body size changed over time, and does this differ between sexes? ####
+
+m_t1 <- bam(log_itd ~ genus + sex +
+              developmentYear_scaled +
+              s(scientificName, bs = "re") +
+              s(grid_id, bs = "re"),
+            data = df, method = "fREML")
+
+m_t2 <- bam(log_itd ~ genus + sex +
+              genus:developmentYear_scaled +
+              s(scientificName, bs = "re") +
+              s(grid_id, bs = "re"),
+            data = df, method = "fREML")
+
+m_t3 <- bam(log_itd ~ genus + sex +
+              sex:developmentYear_scaled +
+              s(scientificName, bs = "re") +
+              s(grid_id, bs = "re"),
+            data = df, method = "fREML")
+
+m_t4 <- bam(log_itd ~ genus + sex +
+              genus:developmentYear_scaled +
+              sex:developmentYear_scaled +
+              s(scientificName, bs = "re") +
+              s(grid_id, bs = "re"),
+            data = df, method = "fREML")
+
+AIC(m_t1, m_t2, m_t3, m_t4)
+# m_t4 has lowest AIC — genus x year and sex x year interactions both justified
+
+best_temporal_model <- m_t4
+summary(best_temporal_model)
+summary(best_temporal_model)$r.sq
+anova(best_temporal_model)
+
+plot(fitted(best_temporal_model), residuals(best_temporal_model),
+     main = "Temporal model: residuals vs fitted")
+qqPlot(residuals(best_temporal_model))
+
+#Per-sex temporal trends
+
+year_sd   <- scaling_params$year_sd
+year_span <- max(df$developmentYear) - min(df$developmentYear)
+
+em_year_sex <- emtrends(best_temporal_model,
+                        specs = ~ sex,
+                        var = "developmentYear_scaled")
+summary(em_year_sex, infer = TRUE)
+pairs(em_year_sex)
+
+sex_trend_df <- as.data.frame(em_year_sex) %>%
+  mutate(
+    slope_per_year       = developmentYear_scaled.trend / year_sd,
+    se_per_year          = SE / year_sd,
+    total_percent_change = (exp(slope_per_year * year_span) - 1) * 100,
+    total_lower          = (exp((slope_per_year - 1.96 * se_per_year) * year_span) - 1) * 100,
+    total_upper          = (exp((slope_per_year + 1.96 * se_per_year) * year_span) - 1) * 100
+  )
+print(sex_trend_df)
+# Males: -4.95% (95% CI: -8.81 to -0.92%), p = 0.017
+# Females: +1.44% (95% CI: -2.13 to +5.16%), p = 0.434
+# Sex divergence: p = 0.002
+
+#Overall sex size difference
+
+sex_coef     <- coef(best_temporal_model)["sexmale"]
+percent_diff <- (exp(sex_coef) - 1) * 100
+cat("Males are", round(abs(percent_diff), 1), "% smaller than females\n")
+# Males are 11.4% smaller than females
+
+#Per-genus x sex temporal trends (supplementary) 
+
+em_year_genus_sex <- emtrends(best_temporal_model,
+                              specs = ~ genus + sex,
+                              var = "developmentYear_scaled")
+summary(em_year_genus_sex, infer = TRUE)
+
+trend_df_sex <- as.data.frame(summary(em_year_genus_sex,
+                                      infer = TRUE)) %>%
+  mutate(
+    slope_per_year       = developmentYear_scaled.trend / year_sd,
+    se_per_year          = SE / year_sd,
+    total_percent_change = (exp(slope_per_year * year_span) - 1) * 100,
+    total_lower          = (exp((slope_per_year - 1.96 * se_per_year) * year_span) - 1) * 100,
+    total_upper          = (exp((slope_per_year + 1.96 * se_per_year) * year_span) - 1) * 100
+  )
+
+
+#### Question 2: Do environmental conditions modulate temporal trends in body size? ####
+# Fit for males only — females showed no significant temporal trend.
+
+m_mechanism <- bam(
+  log_itd ~ genus +
+    developmentYear_scaled * tmean_within_scaled +
+    developmentYear_scaled * ppt_within_scaled +
+    developmentYear_scaled * cropland_within_scaled +
+    developmentYear_scaled * urban_within_scaled +
+    s(scientificName, bs = "re") +
+    s(grid_id, bs = "re"),
+  data = df %>% filter(sex == "male") %>% droplevels(),
+  method = "fREML"
+)
+
+summary(m_mechanism)
+anova(m_mechanism)
+
+
+#Marginal predictions at -1 SD/mean/ +1 SD precip
+
+emtrends_ppt <- emtrends(m_mechanism, specs = ~ ppt_within_scaled,
+                         var = "developmentYear_scaled",
+                         at = list(ppt_within_scaled = c(-1, 0, 1)))
+summary(emtrends_ppt, infer = TRUE)
+
+emtrends_ppt_df <- as.data.frame(summary(emtrends_ppt, infer = TRUE)) %>%
+  mutate(
+    slope_peryear  = developmentYear_scaled.trend / scaling_params$year_sd,
+    pct_per_decade = (exp(slope_peryear * 10) - 1) * 100,
+    lower_pct      = (exp((asymp.LCL / scaling_params$year_sd) * 10) - 1) * 100,
+    upper_pct      = (exp((asymp.UCL / scaling_params$year_sd) * 10) - 1) * 100
+  )
+print(emtrends_ppt_df)
+
+
+
+#### Question 3: How do environmental conditions predict body size variation across spatial and temporal gradients? ####
+# Raw (non-within-cell) scaled predictors capture both spatial and temporal variation. Temporal smooth included as nuisance term.
+
+
+m_w1 <- bam(log_itd ~ genus + sex +
+              tmean_scaled + log_ppt_scaled +
+              urban_scaled + cropland_scaled +
+              s(developmentYear_scaled) +
+              s(scientificName, bs = "re") +
+              s(grid_id, bs = "re"),
+            data = df, method = "fREML")
+
+m_w2 <- bam(log_itd ~ genus + sex +
+              genus:tmean_scaled + genus:log_ppt_scaled +
+              genus:urban_scaled + genus:cropland_scaled +
+              s(developmentYear_scaled) +
+              s(scientificName, bs = "re") +
+              s(grid_id, bs = "re"),
+            data = df, method = "fREML")
+
+m_w3 <- bam(log_itd ~ genus + sex +
+              tmean_scaled + log_ppt_scaled +
+              urban_scaled + cropland_scaled +
+              sex:tmean_scaled + sex:log_ppt_scaled +
+              sex:urban_scaled + sex:cropland_scaled +
+              s(developmentYear_scaled) +
+              s(scientificName, bs = "re") +
+              s(grid_id, bs = "re"),
+            data = df, method = "fREML")
+
+m_w4 <- bam(log_itd ~ genus + sex +
+              genus:tmean_scaled + genus:log_ppt_scaled +
+              genus:urban_scaled + genus:cropland_scaled +
+              sex:tmean_scaled + sex:log_ppt_scaled +
+              sex:urban_scaled + sex:cropland_scaled +
+              s(developmentYear_scaled) +
+              s(scientificName, bs = "re") +
+              s(grid_id, bs = "re"),
+            data = df, method = "fREML")
+
+AIC(m_w1, m_w2, m_w3, m_w4)
+
+best_driver_model <- m_w4
+summary(best_driver_model)
+summary(best_driver_model)$r.sq
+summary(best_driver_model)$dev.expl
+anova(best_driver_model)
+
+# Diagnostics
+
+plot(fitted(best_driver_model), residuals(best_driver_model),
+     main = "Driver model: residuals vs fitted")
+qqPlot(residuals(best_driver_model))
+plot(best_driver_model, select = 1, shade = TRUE,
+     xlab = "Development year (scaled)",
+     ylab = "Partial effect on log(ITD)",
+     main = "Driver model: residual temporal smooth")
+abline(h = 0, lty = 2, col = "red")
+
+# Baseline vs. full  model: variance explained by environment
+m_baseline <- bam(log_itd ~ genus + sex +
+                    s(developmentYear_scaled) +
+                    s(scientificName, bs = "re") +
+                    s(grid_id, bs = "re"),
+                  data = df, method = "fREML")
+
+summary(m_baseline)$r.sq
+summary(best_driver_model)$r.sq
+
+#Helper function 
+back_transform <- function(em_object, var_name) {
+  as.data.frame(em_object) %>%
+    rename(slope = matches("\\.trend$"), SE = SE) %>%
+    mutate(
+      predictor      = var_name,
+      percent_per_sd = (exp(slope) - 1) * 100,
+      lower_percent  = (exp(slope - 1.96 * SE) - 1) * 100,
+      upper_percent  = (exp(slope + 1.96 * SE) - 1) * 100
+    )
+}
+
+#Per-genus slopes (supplementary) 
+
+em_temp     <- emtrends(best_driver_model, specs = ~ genus, var = "tmean_scaled")
+em_ppt      <- emtrends(best_driver_model, specs = ~ genus, var = "log_ppt_scaled")
+em_urban    <- emtrends(best_driver_model, specs = ~ genus, var = "urban_scaled")
+em_cropland <- emtrends(best_driver_model, specs = ~ genus, var = "cropland_scaled")
+
+summary(em_temp,     infer = TRUE)
+summary(em_ppt,      infer = TRUE)
+summary(em_urban,    infer = TRUE)
+summary(em_cropland, infer = TRUE)
+
+# Per-sex slopes 
+
+em_temp_sex     <- emtrends(best_driver_model, specs = ~ sex, var = "tmean_scaled")
+em_ppt_sex      <- emtrends(best_driver_model, specs = ~ sex, var = "log_ppt_scaled")
+em_urban_sex    <- emtrends(best_driver_model, specs = ~ sex, var = "urban_scaled")
+em_cropland_sex <- emtrends(best_driver_model, specs = ~ sex, var = "cropland_scaled")
+
+summary(em_temp_sex,     infer = TRUE)
+summary(em_ppt_sex,      infer = TRUE)
+summary(em_urban_sex,    infer = TRUE)
+summary(em_cropland_sex, infer = TRUE)
+
+pairs(em_temp_sex)
+pairs(em_ppt_sex)
+pairs(em_urban_sex)
+pairs(em_cropland_sex)
+
+#Back-transform 
+
+bt_temp     <- back_transform(em_temp,     "Temperature")
+bt_ppt      <- back_transform(em_ppt,      "Precipitation")
+bt_urban    <- back_transform(em_urban,    "Urbanisation")
+bt_cropland <- back_transform(em_cropland, "Cropland")
+genus_effects <- bind_rows(bt_temp, bt_ppt, bt_urban, bt_cropland)
+
+bt_temp_sex     <- back_transform(em_temp_sex,     "Temperature")
+bt_ppt_sex      <- back_transform(em_ppt_sex,      "Precipitation")
+bt_urban_sex    <- back_transform(em_urban_sex,    "Urbanisation")
+bt_cropland_sex <- back_transform(em_cropland_sex, "Cropland")
+sex_effects <- bind_rows(bt_temp_sex, bt_ppt_sex, bt_urban_sex, bt_cropland_sex)
+
+write.csv(genus_effects %>%
+            select(predictor, genus, percent_per_sd, lower_percent, upper_percent),
+          "genus_effects_driver_model.csv", row.names = FALSE)
+
+write.csv(sex_effects %>%
+            select(predictor, sex, percent_per_sd, lower_percent, upper_percent),
+          "sex_effects_driver_model.csv", row.names = FALSE)
+
+#### Sensitivity analyses (supplementary) ####
+
+# Species composition
+composition_tests <- map_dfr(levels(df$genus), function(g) {
+  genus_df <- df %>%
+    filter(genus == g) %>%
+    mutate(scientificName = droplevels(scientificName))
+  
+  if (nlevels(genus_df$scientificName) < 2) {
+    return(tibble(genus = g, LR = NA, p = NA, n_species = 1))
+  }
+  
+  m_null <- multinom(scientificName ~ sex, data = genus_df, trace = FALSE)
+  m_year <- multinom(scientificName ~ sex + developmentYear_scaled,
+                     data = genus_df, trace = FALSE)
+  
+  test <- anova(m_null, m_year)
+  
+  tibble(
+    genus     = g,
+    LR        = test$`LR stat.`[2],
+    p         = test$`Pr(Chi)`[2],
+    n_species = nlevels(genus_df$scientificName)
+  )
+})
+print(composition_tests)
+
+# Is it genuine shrinkage, or just species turnover?
+
+m_temporal_fixed <- gam(
+  log_itd ~ scientificName + sex * developmentYear + s(grid_id, bs = "re"),
+  data = df,
+  method = "REML"
+)
+anova(m_temporal_fixed)
+
+#### Local environmental trends: did conditions experienced by male specimens change over time? ####
+
+df_male <- df %>% filter(sex == "male")
+
+# Precipitation
+m_ppt_trend <- lm(ppt_within ~ developmentYear, data = df_male)
+summary(m_ppt_trend)
+
+slope_log_peryear    <- coef(m_ppt_trend)["developmentYear"]
+pct_change_per_decade <- (exp(slope_log_peryear * 10) - 1) * 100
+pct_change_per_decade
+# ppt_within is a deviation in log(ppt_annual + 1); local precipitation
+# declined ~-6.4% per decade (R2 = 0.011, P < 0.001).
+
+# Temperature
+m_tmean_trend <- lm(tmean_within ~ developmentYear, data = df_male)
+summary(m_tmean_trend)
+
+# Cropland
+m_cropland_trend <- lm(cropland_within ~ developmentYear, data = df_male)
+summary(m_cropland_trend)
+
+# Urbanisation
+m_urban_trend <- lm(urban_within ~ developmentYear, data = df_male)
+summary(m_urban_trend)

@@ -13,16 +13,12 @@ Shrinking body size is a pervasive consequence of global change, with implicatio
 
 **CA_size_spatiotemporal binning.R** is the script which takes all specimen data and filters them into 150x150km spatiotemporal bins, as described in the methods. Takes before_filtering_CA_size_data.csv as input and produces produces grid_filtered_CA_size_data.csv, which is used for the main analysis.
 
-**environmental_data_extraction.R** extracts state-wide climate and land use data from PRISM, HISDAC, and HYDE to assess changes in temp, precipitation, urbanisation, and agricultural intensity from 1900 to 2024. 
-
 
 ### Data:
 
 **grid_filtered_CA_size_data.csv** includes the size data used in the main analysis (CA_size_analysis.R). These data include only the specimens retained after spatiotemporal binning.
 
 **before_filtering_CA_size_data.csv** presents the size data used in the main analysis PRIOR to spatiotemporal binning, done in (CA_size_spatiotemporal binning.R).
-
-**california_environmental_trends.csv** contains state-wide climate and land use data (1900 - 2024) for environmental trend analysis (extracted in environmental_data_extraction.R, analysed in CA_size_analysis.R).
 
 **median_itd_global.csv** contains a global sample of >23K specimen measurements conducted by community scientists on Notes from Nature. These data include the California size dataset analysed in the paper as well as other measurements from other parts of the world, not used in the paper. Here, size data are presented as the median ITD measurement from all measurements for a given specimen, as recommended in Ostwald et al. 2025 (https://doi.org/10.1002/ece3.71665).
 
